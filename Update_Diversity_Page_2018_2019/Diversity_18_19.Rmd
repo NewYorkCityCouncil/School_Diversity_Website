@@ -1,0 +1,390 @@
+---
+title: "Updating Diversity Page with 2018-2019 Data"
+author: "Melissa Nunez"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r}
+library(scales)
+library(plotly)
+library(readxl)
+library(janitor)
+library(councildown)
+
+save_plotly <- function(p, name) {
+
+  p$sizingPolicy$padding <- 0
+
+  p <- p %>%
+    layout(xaxis=list(fixedrange=TRUE)) %>%
+    layout(yaxis=list(fixedrange=TRUE))
+
+  name <- paste0(name, ".html")
+  htmlwidgets::saveWidget(p, name)
+  file.copy(name, "docs", overwrite = TRUE)
+  file.rename(name, paste0("/Users/menunez/Desktop/Agencies/DOE/School_Diversity/Plots/", name))
+  p
+}
+
+
+# City wide demographics --------------------------------------------------
+
+citywide <- read_excel("/Users/menunez/Desktop/Agencies/DOE/Data/demographic-snapshot\ copy.xlsx", sheet = "Citywide") %>% clean_names()
+
+school <- read_excel("/Users/menunez/Desktop/Agencies/DOE/Data/demographic-snapshot\ copy.xlsx", sheet = "School") %>% clean_names()
+
+cols <- c("#706AE0", "#CB5871",  "#82C91E", "#16AC9E", "#F59F00")
+
+citywide_demos <- citywide %>%
+  filter(year == "2018-19") %>%
+  select(number_asian,
+         number_black,
+         number_hispanic,
+         number_multiple_race_categories_not_represented,
+         number_white) %>%
+  gather("race", "number") %>%
+  mutate(prop = number/sum(number)) %>%
+  mutate(race = str_remove(race, "number_") %>%
+           str_replace_all("_", " ") %>%
+           str_to_sentence() %>%
+           str_wrap(width = 20) %>%
+           reorder(-number)) %>%
+  ggplot(aes(race, prop,
+             text = paste(race, percent(prop), sep = "<br>"))) +
+  geom_col(aes(fill = race), show.legend = FALSE) +
+  # geom_text(aes(label = paste0(number(number,big.mark = ","),
+  #                              " (", percent(prop) ,")")),
+  #           family = "Times New Roman",
+  #           vjust = -.5) +
+  scale_fill_manual(values = cols) +
+  scale_y_continuous(labels = percent_format(accuracy = 1),
+                     expand = expand_scale(mult = .05, add = c(0, .01))) +
+  labs(title = "Demographic breakdown of\nNew York City Public Schools",
+       subtitle = "For the 2018-19 school year",
+       x = "Race/ethnicity",
+       y = "Percent of students",
+       caption = "Source: DOE Demographic Snapshot") +
+  theme_nycc() +
+  theme(panel.border = element_blank(),
+        legend.position = "none")
+
+ggplotly(citywide_demos, tooltip = "text") %>%
+  config(displayModeBar = FALSE) %>%
+  hide_legend() %>%
+  layout(margin = list(l = 80)) %>%
+  save_plotly("citywide_school_demos")
+
+# Percent in poverty ------------------------------------------------------
+
+more_75_poverty_race <- school %>%
+  filter(year == "2018-19", !str_detect(dbn, "^84"), percent_poverty > .75) %>%
+  summarize_at(vars(starts_with("number_")), sum) %>%
+  select(number_asian,
+         number_black,
+         number_hispanic,
+         number_multiple_race_categories_not_represented,
+         number_white)
+
+num_race <- school %>%
+  filter(year == "2018-19", !str_detect(dbn, "^84")) %>%
+  summarize_at(vars(starts_with("number_")), sum) %>%
+  select(number_asian,
+         number_black,
+         number_hispanic,
+         number_multiple_race_categories_not_represented,
+         number_white)
+
+
+
+dat <- (more_75_poverty_race/num_race) %>%
+  gather("race", "prop") %>%
+  mutate(race = str_remove(race, "number_") %>%
+           str_replace_all("_", " ") %>%
+           str_to_sentence() %>%
+           str_wrap(width = 20) %>%
+           reorder(-prop))
+cols <- c("#706AE0", "#CB5871",  "#82C91E", "#F59F00", "#16AC9E")
+names(cols) <- levels(dat$race)
+
+pov_plot <- ggplot(dat, aes(race, prop,
+                            text = paste(race, percent(prop), sep = "<br>"))) +
+  geom_col(aes(fill = race), show.legend = FALSE) +
+  scale_fill_manual(values = cols) +
+  # geom_text(aes(label = percent(prop)),
+  #           family = "Times New Roman",
+  #           vjust = -.5) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), expand = expand_scale(mult = .05, add = c(0, .01))) +
+  labs(title = "Percentage of students attending a school where\nmore than 75% of students experience poverty",
+       x = "Race/ethnicity",
+       y = "Percent of students",
+       caption = "Source: DOE Demographic Snapshot") +
+  theme_nycc() +
+  theme(panel.border = element_blank(),
+        legend.position = "none")
+
+ggplotly(pov_plot, tooltip = "text") %>%
+  config(displayModeBar = FALSE) %>%
+  hide_legend() %>%
+  layout(margin = list(l = 80, t = 60)) %>%
+  save_plotly("students_in_schools_75_pov")
+
+# SHS Demographics --------------------------------------------------------
+
+shs <- c("10X445",
+         "13K430",
+         "10X696",
+         "31R605",
+         "02M475",
+         "14K449",
+         "05M692",
+         "28Q687")
+
+
+shs_demo_plot <- school %>%
+  filter(dbn %in% shs, year == "2018-19") %>%
+  select(school_name,
+         number_asian,
+         number_black,
+         number_hispanic,
+         number_multiple_race_categories_not_represented,
+         number_white) %>%
+  gather("race", "number", -school_name) %>%
+  group_by(school_name) %>%
+  mutate(prop = number/sum(number),
+         pretty_prop = ifelse(race %in% c("number_black", "number_hispanic", "number_multiple_race_categories_not_represented"), scales::percent(prop, accuracy = 1), NA)) %>%
+  ungroup() %>%
+  mutate(race = str_remove(race, "number_") %>%
+           str_replace_all("_", " ") %>%
+           str_to_sentence() %>%
+           # str_wrap(width = 30) %>%
+           reorder(number),
+         school_name = str_wrap(school_name, 20)) %>%
+  ggplot(aes(school_name, prop, fill = race)) +
+  geom_col(position = "stack") +
+  # geom_text_repel(aes(y = prop, label = pretty_prop), position = "stack",
+  #                 family = "Times New Roman",
+  #                 size = 4.5,
+  #                 min.segment.length = 0) +
+  scale_fill_discrete(reverse = FALSE) +
+  # coord_flip() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Specialized high school diversity (2018-19 school year)",
+       subtitle = "The percent of students of each race and ethnicity attending a specialized high school",
+       y = "Percent of students",
+       x = "",
+       caption = "Source: DOE Demographic Snapshot",
+       fill =  "Race/ethnicity") +
+  theme_nycc(print = TRUE) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+
+
+school %>%
+  filter(dbn %in% shs, year == "2018-19") %>%
+  select(school_name,
+         number_asian,
+         number_black,
+         number_hispanic,
+         number_multiple_race_categories_not_represented,
+         number_white,
+         number_poverty, total_enrollment) %>%
+  summarize(pov = sum(number_poverty), tot = sum(total_enrollment)) %>%
+  mutate(perc =pov/tot)
+
+school %>%
+  filter(dbn %in% shs, year == "2018-19") %>%
+  select(school_name,
+         number_asian,
+         number_black,
+         number_hispanic,
+         number_multiple_race_categories_not_represented,
+         number_white) %>%
+  summarize_if(is.numeric, sum) %>%
+  gather(race, total) %>%
+  mutate(percent = total/sum(total),
+         race = str_remove(race, "number_") %>%
+           str_replace_all("_", " ") %>%
+           str_to_sentence() %>%
+           str_wrap(width = 25) %>%
+           reorder(-percent)) %>%
+  ggplot(aes(race, percent, fill = race)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = percent(percent, accuracy = 1)),
+            family = "Times New Roman",
+            vjust = -.5) +
+  scale_fill_nycc(reverse = TRUE) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(title = "Total specialized high school diversity (2018-19 school year)",
+       subtitle = "The percent of students of each race and ethnicity attending a specialized high school",
+       y = "Percent of students",
+       x = "",
+       caption = "Source: DOE Demographic Snapshot",
+       fill =  "Race/ethnicity") +
+  theme_nycc(print = TRUE)
+
+
+
+
+shs_demo_plot <- school %>%
+  filter(dbn %in% shs, year == "2018-19") %>%
+  select(school_name,
+         number_asian,
+         number_black,
+         number_hispanic,
+         number_multiple_race_categories_not_represented,
+         number_white) %>%
+  gather("race", "number", -school_name) %>%
+  group_by(school_name) %>%
+  mutate(prop = number/sum(number),
+         pretty_prop = ifelse(race %in% c("number_black", "number_hispanic", "number_multiple_race_categories_not_represented"), scales::percent(prop, accuracy = 1), NA)) %>%
+  ungroup() %>%
+  mutate(race = str_remove(race, "number_") %>%
+           str_replace_all("_", " ") %>%
+           str_to_sentence() %>%
+           str_wrap(width = 20) %>%
+           reorder(number),
+         school_name = str_wrap(school_name, 20)) %>%
+  ggplot(aes(school_name, prop, fill = race,
+             text = paste(school_name, race, percent(prop), sep = "<br>"))) +
+  geom_col(position = "stack") +
+  # geom_text_repel(aes(y = prop, label = pretty_prop), position = "stack",
+  #                 family = "Times New Roman",
+  #                 size = 4.5,
+  #                 min.segment.length = 0) +
+  scale_fill_discrete(reverse = FALSE) +
+  # coord_flip() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Specialized high school diversity\n(2018-19 school year)",
+       subtitle = "The percent of students of each race and ethnicity attending a specialized high school",
+       y = "Percent of students",
+       x = "",
+       caption = "Source: DOE Demographic Snapshot",
+       fill =  "Race/ethnicity") +
+  theme_nycc() +
+  theme(legend.position = "top",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        panel.border = element_blank())
+
+shs_demo_plot %>%
+  ggplotly(tooltip = "text") %>%
+  config(displayModeBar = FALSE) %>%
+  # hide_legend() %>%
+  layout(margin = list(l = 80), legend = list(orientation = "h", y = -.35, xanchor = "center", x = .47)) %>%
+  save_plotly("shs_demos")
+
+
+# SHS total demographics --------------------------------------------------
+
+{
+  school %>%
+    filter(dbn %in% shs, year == "2018-19") %>%
+    select(school_name,
+           number_asian,
+           number_black,
+           number_hispanic,
+           number_multiple_race_categories_not_represented,
+           number_white) %>%
+    summarize_if(is.numeric, sum) %>%
+    gather(race, total) %>%
+    mutate(percent = total/sum(total),
+           race = str_remove(race, "number_") %>%
+             str_replace_all("_", " ") %>%
+             str_to_sentence() %>%
+             str_wrap(width = 25) %>%
+             reorder(-percent)) %>%
+    ggplot(aes(race, percent, fill = race, text = paste(race, percent(percent), sep = "<br>"))) +
+    geom_col(show.legend = FALSE) +
+    # geom_text(aes(label = percent(percent, accuracy = 1)),
+    #           family = "Times New Roman",
+    #           vjust = -.5) +
+    scale_fill_nycc(reverse = TRUE) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    labs(title = "Total specialized high school diversity\n(2018-19 school year)",
+         subtitle = "The percent of students of each race and ethnicity attending a specialized high school",
+         y = "Percent of students",
+         x = "",
+         caption = "Source: DOE Demographic Snapshot",
+         fill =  "Race/ethnicity") +
+    theme_nycc() +
+    theme(panel.border = element_blank(),
+          legend.position = "none")
+} %>%
+  ggplotly(tooltip = "text") %>%
+  config(displayModeBar = FALSE) %>%
+  # hide_legend() %>%
+  layout(margin = list(l = 80)) %>%
+  save_plotly("shs_total_demos")
+
+
+# SHS Poverty -------------------------------------------------------------
+
+{
+  school %>%
+    filter(dbn %in% shs, year == "2018-19") %>%
+    select(school_name,
+           percent_poverty, economic_need_index) %>%
+    mutate(school_name = str_wrap(school_name, width = 20) %>%
+             reorder(percent_poverty)) %>%
+    ggplot(aes(school_name, percent_poverty, text = paste(school_name, percent(percent_poverty), sep = "<br>"))) +
+    geom_col(show.legend = FALSE, fill = "#2F56A6") +
+    # ggplot2::scale_fill_gradient(low = "#228AE6", high = "#FFFFFF") +
+    scale_y_continuous(labels = percent_format(accuracy = 1), expand = expand_scale(mult = .05, add = c(0, .05))) +
+    coord_flip() +
+    labs(title = "Students in poverty",
+         x = "Specialized high schools",
+         y = "Percent of students in poverty") +
+    theme_nycc() +
+    theme(legend.position = "bottom",
+          # axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+          panel.border = element_blank())
+} %>%
+  ggplotly(tooltip = "text") %>%
+  config(displayModeBar = FALSE) %>%
+  hide_legend() %>%
+  layout(margin = list(l = 80)) %>%
+  save_plotly("shs_poverty")
+############################
+
+
+
+
+
+##### Elementary school diversity ---------------------------------------------
+
+{
+  p1 +
+    theme(legend.position = "none",
+          panel.border = element_blank())
+}%>%
+  ggplotly(tooltip = "text") %>%
+  config(displayModeBar = FALSE) %>%
+  hide_legend() %>%
+  layout(margin = list(l = 80)) %>%
+  save_plotly("parkside_demos")
+
+{
+  p2 +
+    theme(legend.position = "none",
+          panel.border = element_blank())
+  } %>%
+  ggplotly(tooltip = "text") %>%
+  config(displayModeBar = FALSE) %>%
+  hide_legend() %>%
+  layout(margin = list(l = 80)) %>%
+  save_plotly("caton_demos")
+
+
+citywide %>%
+  filter(year == "2018-19")
+
+school %>%
+    filter(dbn %in% shs, year == "2018-19") %>% select(total_enrollment, number_poverty) %>% mutate(sum(total_enrollment), sum(number_poverty))
+
+```
